@@ -265,7 +265,10 @@ class Sim(EnvBase):
                 "gripper_delta": action.gripper_delta,
                 **({"frame_bodies": frame_bodies} if frame_bodies else {}),
             },
-            "osc_pose": {"gripper_range": action.gripper_range},
+            "osc_pose": {
+                "gripper_range": action.gripper_range,
+                "gripper_delta": action.gripper_delta,
+            },
         }
         spaces = make_action_spaces(arms, control_hz=request.physics.control_hz, options=options)
         return spaces
