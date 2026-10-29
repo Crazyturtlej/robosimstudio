@@ -34,18 +34,32 @@ TASK_PYTHON: tuple[str, ...] = (
     "repro_physics.py",
     "routine.py",
     "tools.py",
+    "rewards.py",
 )
 """Python a task directory may hold, by name, and what each is for.
 
-Three kinds. **Builders** -- ``staging.py`` (the profile and arrangements),
+Four kinds. **Builders** -- ``staging.py`` (the profile and arrangements),
 ``scenes.py`` (the cell), ``records.py`` (the asset declarations and the
 entity code they bind), ``repro_physics.py`` (an imported reproduction's
 physics) -- build the scene a document cannot describe. **Solutions** --
 ``routine.py``, ``tools.py`` -- answer the question the document asks. The
-**measure** -- ``difficulty.py`` -- orders the variants. Any other module at
-the top of a task directory has to be imported by one of these, which is
-what makes it that file's part rather than a task defined in Python; ``assets/``
-holds data only, and ``graphs/`` the graphs.
+**measure** -- ``difficulty.py`` -- orders the variants. The **shaping** --
+``rewards.py`` -- is the dense signal a learner or a planner climbs toward the
+document's own goal. Any other module at the top of a task directory has to be
+imported by one of these, which is what makes it that file's part rather than a
+task defined in Python; ``assets/`` holds data only, and ``graphs/`` the graphs.
+
+**Why a reward module is not a task defined in Python**, which is the thing
+this list exists to refuse. A document's ``(:reward ...)`` clause stays the
+task's reward: ``Env.evaluate`` reports it, the goal predicate decides success,
+and nothing here changes either. ``rewards.py`` is a *shaped* reward beside
+that -- read by a training stack when shaped rewards are switched on, and by a
+sampling planner's cost, and by nothing that scores an episode. A suite needs
+one when its document reward is too sparse to climb.
+
+The name is fixed rather than free for the reason every name here is: two
+suites calling the same thing different things is how a convention stops being
+one, and the readers above resolve the module by this name.
 """
 
 LOADER = "task.py"
