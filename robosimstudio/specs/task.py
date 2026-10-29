@@ -244,6 +244,8 @@ class ActionSpec:
             ``gripper_pd_joint_target_delta_pos`` against ``gripper_pd_joint_pos``.
             Also per robot in the same benchmark, and RT-1's own wrapper emits
             to match: relative for the Google robot, absolute for the WidowX.
+            Read by both ``ee_delta`` and ``osc_pose``, as :attr:`gripper_range`
+            is.
         arm_planner_limits: ``(velocity, acceleration, jerk)`` for the arm's
             plan, in rad/s, rad/s^2 and rad/s^3.
         gripper_planner_limits: The same for the jaw. Separate because a jaw is

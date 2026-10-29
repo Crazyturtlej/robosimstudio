@@ -120,6 +120,18 @@ class Env(Sim):
             another per command (``step(action, mode="osc_pose")``) or hand the
             arm over for a while with
             :meth:`~robosimstudio.core.env.EnvBase.use_control`.
+        gripper_range: Overrides :attr:`~robosimstudio.specs.ActionSpec.gripper_range`
+            when not ``None``.
+        gripper_delta: Overrides :attr:`~robosimstudio.specs.ActionSpec.gripper_delta`
+            when not ``None``.
+
+            These two are per-*run* overrides of a per-task convention, which
+            is the same reason ``control_mode`` is one. A task is shared by
+            every policy trained on it, and two of them can disagree about what
+            the gripper number means: a checkpoint trained elsewhere emits the
+            convention it was trained against, while a policy learning in-env
+            learns whatever it is handed. Stating it on the task would settle
+            the argument for both.
         use_cuda_graph: Overrides the physics spec's own setting.
         verbose: Print what was compiled.
     """
@@ -139,6 +151,8 @@ class Env(Sim):
         device: str | None = None,
         max_steps: int = 0,
         control_mode: str = "",
+        gripper_range: tuple[float, float] | None = None,
+        gripper_delta: bool | None = None,
         use_cuda_graph: bool | None = None,
         verbose: bool = False,
     ) -> None:
@@ -159,6 +173,20 @@ class Env(Sim):
                 scene=scene or self.task.scene,
                 embodiment=embodiment or self.task.embodiment,
                 gripper=gripper or self.task.gripper,
+            )
+        if gripper_range is not None or gripper_delta is not None:
+            action = self.task.action
+            self.task = replace(
+                self.task,
+                action=replace(
+                    action,
+                    gripper_range=(
+                        action.gripper_range
+                        if gripper_range is None
+                        else (float(gripper_range[0]), float(gripper_range[1]))
+                    ),
+                    gripper_delta=(action.gripper_delta if gripper_delta is None else bool(gripper_delta)),
+                ),
             )
         self.device = device
         self.verbose = bool(verbose)

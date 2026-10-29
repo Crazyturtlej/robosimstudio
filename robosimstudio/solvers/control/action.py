@@ -259,6 +259,7 @@ class _RangedGripper:
     """
 
     gripper_range: tuple[float, float] = (0.0, 1.0)
+    gripper_delta: bool = False
 
     def _set_gripper_range(self, gripper_range: tuple[float, float]) -> None:
         low, high = (float(v) for v in gripper_range)
@@ -291,6 +292,36 @@ class _RangedGripper:
         if gripper is not None and not gripper.action_closed_at_high:
             fraction = 1.0 - fraction
         return float(low + fraction * (high - low))
+
+    def _grip(self, value: float, gripper: Gripper) -> float:
+        """This step's gripper command, absolute or accumulated.
+
+        The delta form reproduces ``pd_joint_target_delta_pos``: the normalized
+        number scales onto **half** the jaw's coordinate range and is added to
+        the standing target, then clipped -- so a full-scale command takes two
+        steps to cross the stroke, which is what makes a policy's small nudges
+        readable as nudges rather than as slams to a limit.
+        """
+        if not self.gripper_delta:
+            return self.grip_command(value, gripper)
+        low, high = self.gripper_range
+        span = high - low
+        step = (2.0 * (float(np.clip(value, low, high)) - low) / span - 1.0) if span else 0.0
+        if not gripper.action_closed_at_high:
+            step = -step
+        return float(np.clip(gripper.command + 0.5 * step, 0.0, 1.0))
+
+    def _hold_grip(self, gripper: Gripper | None) -> float:
+        """The gripper number that asks for no change this step.
+
+        For an absolute gripper that is wherever the jaw already stands. For a
+        delta one it is the *midpoint* of the range rather than either end of
+        it, because the number means a change and zero change is the middle.
+        """
+        if self.gripper_delta:
+            low, high = self.gripper_range
+            return 0.5 * (low + high)
+        return self.grip_action(gripper.command if gripper is not None else 0.0, gripper)
 
 
 EE_DELTA_CONVENTIONS = ("align", "align2", "tool")
@@ -472,36 +503,12 @@ class ActionEEDelta(_RangedGripper, ActionSpace):
                 gripper.command = self._grip(values[6], gripper)
                 gripper.apply(control.joint_target_q)
 
-    def _grip(self, value: float, gripper: Gripper) -> float:
-        """This step's gripper command, absolute or accumulated.
-
-        The delta form reproduces ``pd_joint_target_delta_pos``: the normalized
-        number scales onto **half** the jaw's coordinate range and is added to
-        the standing target, then clipped -- so a full-scale command takes two
-        steps to cross the stroke, which is what makes a policy's small nudges
-        readable as nudges rather than as slams to a limit.
-        """
-        if not self.gripper_delta:
-            return self.grip_command(value, gripper)
-        low, high = self.gripper_range
-        span = high - low
-        step = (2.0 * (float(np.clip(value, low, high)) - low) / span - 1.0) if span else 0.0
-        if not gripper.action_closed_at_high:
-            step = -step
-        return float(np.clip(gripper.command + 0.5 * step, 0.0, 1.0))
-
     def hold_action(self, state) -> np.ndarray:
         """A zero delta, which leaves the internal setpoint standing."""
         del state
         out = np.zeros(self.action_dim, dtype=np.float32)
         for i, (_, gripper) in enumerate(self.arms):
-            if self.gripper_delta:
-                # Zero *change*, which for a delta gripper is the midpoint of
-                # the range rather than either end of it.
-                low, high = self.gripper_range
-                out[i * self.per_arm + 6] = 0.5 * (low + high)
-            else:
-                out[i * self.per_arm + 6] = self.grip_action(gripper.command if gripper is not None else 0.0, gripper)
+            out[i * self.per_arm + 6] = self._hold_grip(gripper)
         return out
 
 
@@ -536,6 +543,19 @@ class ActionOsc(_RangedGripper, ActionSpace):
             control modes without its gripper commands changing meaning. Set it
             to ``(-1.0, 1.0)`` to take robosuite's convention unaltered, which is
             what a checkpoint trained there emits: -1 open, +1 closed.
+        gripper_delta: The gripper number is a **change** to the standing
+            command rather than an absolute position, as
+            :class:`ActionEEDelta`'s field of the same name.
+
+            Worth pairing with ``gripper_range=(-1.0, 1.0)``, and for a policy
+            learning in-env worth more than it looks. The six pose numbers are
+            already deltas, so their neutral value is 0 -- the centre of a
+            squashed head's output. An absolute gripper's neutral is one *end*
+            of its range, so a Gaussian head whose spread anneals converges on
+            a jaw held permanently at that end, and no amount of reward for
+            closing reaches a dimension that cannot stay closed for two
+            consecutive steps. As a delta the jaw holds where it is instead,
+            which is what makes a sustained grasp reachable by exploration.
         by_dof: As :class:`ActionSpace`.
     """
 
@@ -549,12 +569,14 @@ class ActionOsc(_RangedGripper, ActionSpace):
         gains: OscGains | None = None,
         output_max: Sequence[float] = OSC_OUTPUT_MAX,
         gripper_range: tuple[float, float] = (0.0, 1.0),
+        gripper_delta: bool = False,
         by_dof: bool = False,
     ) -> None:
         super().__init__(arms, by_dof=by_dof)
         if control_hz <= 0.0:
             raise UnsupportedMode(f"osc_pose needs the environment's control rate, got control_hz={control_hz}")
         self._set_gripper_range(gripper_range)
+        self.gripper_delta = bool(gripper_delta)
         self.controllers = [
             OscController(ik, control_dt=1.0 / float(control_hz), gains=gains, output_max=output_max)
             for ik, _ in self.arms
@@ -575,7 +597,7 @@ class ActionOsc(_RangedGripper, ActionSpace):
         ):
             controller.apply(values[:6], control, state)
             if gripper is not None:
-                gripper.command = self.grip_command(values[6], gripper)
+                gripper.command = self._grip(values[6], gripper)
                 gripper.apply(control.joint_target_q)
 
     def hold_action(self, state) -> np.ndarray:
@@ -592,7 +614,7 @@ class ActionOsc(_RangedGripper, ActionSpace):
             pos, quat, _, _ = controller.measure(state)
             target_pos, target_quat = controller.setpoint
             delta = osc_action(pos, quat, target_pos, target_quat, output_max=controller.output_max)
-            parts.append(np.append(delta, self.grip_action(gripper.command if gripper is not None else 0.0, gripper)))
+            parts.append(np.append(delta, self._hold_grip(gripper)))
         return np.concatenate(parts).astype(np.float32)
 
 

@@ -91,6 +91,25 @@ class TestGripperRangeIsShared(unittest.TestCase):
     def test_one_convention_for_both_cartesian_spaces(self):
         self.assertIs(ActionOsc.grip_command, ActionEEDelta.grip_command)
         self.assertIs(ActionOsc.grip_action, ActionEEDelta.grip_action)
+        # The absolute/delta reading of the number is the same convention, so
+        # it lives beside the other two rather than once per space.
+        self.assertIs(ActionOsc._grip, ActionEEDelta._grip)
+        self.assertIs(ActionOsc._hold_grip, ActionEEDelta._hold_grip)
+
+    def test_both_cartesian_spaces_take_a_delta_gripper(self):
+        arms = [(_StubArm(), None)]
+        for space in (
+            ActionEEDelta(arms, gripper_range=(-1.0, 1.0), gripper_delta=True),
+            ActionOsc(arms, control_hz=20.0, gripper_range=(-1.0, 1.0), gripper_delta=True),
+        ):
+            self.assertTrue(space.gripper_delta)
+            # Zero change is the midpoint of the range, not either end of it.
+            self.assertAlmostEqual(space._hold_grip(None), 0.0)
+        for space in (
+            ActionEEDelta(arms, gripper_range=(-1.0, 1.0)),
+            ActionOsc(arms, control_hz=20.0, gripper_range=(-1.0, 1.0)),
+        ):
+            self.assertFalse(space.gripper_delta)
 
     def test_both_validate_and_map_the_range(self):
         arms = [(_StubArm(), None)]
